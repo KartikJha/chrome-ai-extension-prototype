@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Phrase Matcher</title>
+
+    <style>
+      /* CSS styling */
+      body,
+      html {
+        margin: 0;
+      }
+
+      html {
+        height: 100%;
+        background-color: teal;
+      }
+
+      body {
+        height: inherit;
+        overflow: hidden;
+      }
+
+      h1,
+      p {
+        font-family: sans-serif;
+        text-align: center;
+      }
+
+      div p {
+        padding: 20px;
+        background-color: rgba(0, 0, 0, 0.2);
+      }
+
+      div {
+        overflow: auto;
+        position: absolute;
+        bottom: 0;
+        right: 0;
+        left: 0;
+      }
+
+      button {
+        margin: 0 auto;
+        display: block;
+        font-size: 1.1rem;
+        width: 170px;
+        line-height: 2;
+        margin-top: 30px;
+      }
+
+      @media all and (max-height: 410px) {
+        div {
+          position: static;
+        }
+      }
+
+      .phrase {
+        font-weight: bold;
+      }
+
+      .output {
+        font-style: italic;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>Phrase Matcher</h1>
+    <p>Press the button, then say the phrase to test the recognition.</p>
+
+    <button>Start new test</button>
+
+    <div>
+      <p class="phrase">Phrase...</p>
+      <p class="result">Right or wrong?</p>
+      <p class="output">...diagnostic messages</p>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
