@@ -6,6 +6,11 @@
     "action": {
       "default_popup": "popup.html",
       "default_title": "Speech Logger"
-    }
+    },
+    "permissions": [
+        "scripting",
+        "activeTab",
+        "audioCapture"
+    ]
   }
   
