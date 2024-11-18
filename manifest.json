@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "HTML Reader for Active Tabs",
-  "description": "Reads and logs the HTML of all active tabs.",
+  "name": "AI Summarizer",
+  "description": "Reads data on the current page and summarizes it.",
   "version": "1.0",
   "permissions": ["tabs", "scripting", "sidePanel", "activeTab"],
   "action": {
