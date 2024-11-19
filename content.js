@@ -218,15 +218,40 @@ function extractMetaData(htmlString) {
 }
 
 function extractTextFromBody(htmlContent) {
-    // Parse the HTML content into a DOM structure
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(htmlContent, 'text/html');
+  // Parse the HTML content into a DOM structure
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(htmlContent, 'text/html')
 
-    // Get all <p> and <article> elements inside the <body>
-    const elements = doc.body.querySelectorAll('p, article');
+  // Get all <p> and <article> elements inside the <body>
+  const elements = doc.body.querySelectorAll('p, article')
 
-    // Extract text content from each element
-    const extractedText = Array.from(elements).map(el => el.textContent.trim());
+  // Extract text content from each element
+  const extractedText = Array.from(elements).map((el) => el.textContent.trim())
 
-    return extractedText;
+  return extractedText
 }
+
+// content-script.js
+
+;(function () {
+  // Listen for the `beforeunload` event to detect a page reload
+  window.addEventListener('beforeunload', () => {
+    // Send a message to the background script
+    const pageHTML = document.documentElement.outerHTML
+    const message = {
+      type: 'siteTextContent',
+      content: extractTextFromBody(pageHTML),
+      html: pageHTML,
+    }
+    chrome.runtime.sendMessage({ type: 'PAGE_RELOADED' }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          'Error sending message:',
+          chrome.runtime.lastError.message
+        )
+        return
+      }
+      console.log('Message sent. Response:', response)
+    })
+  })
+})()

@@ -1,235 +1,206 @@
-// document.getElementById('actionButton').addEventListener('click', async () => {
-//   try {
-//     // Example: Get current tab info
-//     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+let messageHandlerTriggered = false
+let timerId = null
+let currentTabId = null
 
-//     // Example: Execute script in current tab
-//     const result = await chrome.scripting.executeScript({
-//       target: { tabId: tab.id },
-//       function: () => document.documentElement.outerHTML,
-//     })
+document
+  .getElementById('actionButton')
+  .addEventListener('click', handleActionButtonClick)
 
-//     // Display result
-//     document.getElementById('output').value = result[0].result
-//   } catch (error) {
-//     console.error('Error:', error)
-//     document.getElementById('output').value = 'Error: ' + error.message
-//   }
-// })
+// Event Listener for runtime messages
+chrome.runtime.onMessage.addListener(handleRuntimeMessage)
 
-let messageHandlerTriggered = false;
-let timerId = null;
-
-async function checkIfMessageHandlerHasTriggered() {
-    if (messageHandlerTriggered) {
-        console.log('Message handler has already been triggered.');
-        document.getElementById('actionButton').textContent = 'Summarize';
-        return true;
-    } else {
-        let data = null;
-        try {
-            data = await await getFromChromeStorageAsync('webPageContent')
-            if (data) {
-                console.log('Retrieved webPageContent:', data)
-            } else {
-                console.log('No data found for content.')
-            }
-        } catch (error) {
-            console.error('Failed to retrieve data:', error)
-        }
-        const textArea = document.getElementById('output');
-        textArea.disabled = true;
-        await handleSiteTextContent({ content: data }, textArea);
-    }
+async function handleActionButtonClick(e) {
+  messageHandlerTriggered = false
+  e.target.textContent = 'Summarizing'
+  e.target.disabled = true
+  const currTabId = await getCurrentTabId()
+  let data = null
+  const changedTab = await isTabChanged(currTabId)
+  if (!changedTab) {
+    data = await getDataFromChromeStorage(`webPageContent:${currTabId}`)
+  }
+  if (data) {
+    handleRuntimeMessage(
+      { type: 'siteTextContent', content: data },
+      'cache-flow'
+    )
+  } else {
+    chrome.tabs.query({}, (tabs) => {
+      timerId = setTimeout(checkIfMessageHandlerHasTriggered, 5000)
+      injectContentScriptIntoActiveTabs(tabs)
+    })
+  }
 }
 
-chrome.runtime.onMessage.addListener(async (message, sender) => {
-  const textarea = document.getElementById('output');
-  textarea.disabled = true;
-
+async function handleRuntimeMessage(message, sender) {
+  const textarea = document.getElementById('output')
+  textarea.disabled = true
+  const currTabId = await getCurrentTabId(); 
+  await saveDataToChromeStorage(`webPageContent:${currTabId}`, message.content)
   if (message.type === 'metaTagContent') {
-    await handleMetaTagContent(message, sender, textarea);
+    await handleMetaTagContent(message, sender, textarea)
   } else if (message.type === 'siteTextContent') {
-    await handleSiteTextContent(message, textarea);
+    await handleSiteTextContent(message, textarea)
+  } else if (['PAGE_RELOADED', 'PAGE_NAVIGATED'].includes(message.type)) {
+    const currTabId = await getCurrentTabId()
+    await deleteKeyFromChromeStorageAsync(`webPageContent:${currTabId}`)
+    // await deleteKeyFromChromeStorageAsync('previousTabId')
   }
-});
+}
 
 async function handleMetaTagContent(message, sender, textarea) {
-  const { available, defaultTemperature, defaultTopK, maxTopK } =
-    await ai.languageModel.capabilities();
-
+  const { available } = await ai.languageModel.capabilities()
   if (available !== 'no') {
-    const session = await ai.languageModel.create();
-
-    // Prompt the model and wait for the whole result to come back.
-    const result = await session.prompt(
-      `Based on the meta tags values provided, {tag_values: ${cleanStringArrayEnhanced(
-        message.content
-      )}}, generate a one word category for website these tags are attached to`
-    );
-    textarea.value += `Tab: ${sender.tab.title}\n\n Tags: ${result} \n\n---\n\n`;
+    const session = await ai.languageModel.create()
+    const result = await session.prompt(generateMetaTagPrompt(message.content))
+    textarea.value += `Tab: ${sender.tab.title}\n\nTags: ${result}\n\n---\n\n`
   }
 }
 
 async function handleSiteTextContent(message, textarea) {
-  messageHandlerTriggered = true;
-  clearTimeout(timerId);
-  const canSummarize = await ai.summarizer.capabilities();
-  let summarizer;
+  messageHandlerTriggered = true
+  clearTimeout(timerId)
 
+  const canSummarize = await ai.summarizer.capabilities()
   if (canSummarize && canSummarize.available !== 'no') {
-    if (canSummarize.available === 'readily') {
-      // The summarizer can immediately be used.
-      summarizer = await ai.summarizer.create();
-    } else {
-      // The summarizer can be used after the model download.
-      summarizer = await ai.summarizer.create();
-      summarizer.addEventListener('downloadprogress', (e) => {
-        console.log(e.loaded, e.total);
-      });
-      await summarizer.ready;
-    }
-
-    const filteredWebPageContent = message.content.filter((c) => c);
-
-    if (filteredWebPageContent.length) {
+    const summarizer = await createSummarizer(canSummarize)
+    const filteredContent = message.content.filter(Boolean)
+    const currTabId = await getCurrentTabId(); 
+    await saveDataToChromeStorage(`webPageContent:${currTabId}`, filteredContent)
+    if (filteredContent.length) {
       try {
-        await setToChromeStorageAsync('webPageContent', filteredWebPageContent);
-        console.log('Data successfully saved!');
+        textarea.value = await summarizeContent(summarizer, filteredContent)
       } catch (error) {
-        console.error('Failed to save data:', error);
+        textarea.disabled = false
+        textarea.value =
+          'Failed to summarize the content. Please try again later :('
+        document.getElementById('actionButton').textContent = 'Summarize'
+        document.getElementById('actionButton').disabled = false
+        console.error('Failed to summarize', error)
       }
-
-      textarea.value = '';
-
-      const result = await summarizer.summarize(
-        filteredWebPageContent.join('\n')
-      );
-
-      textarea.value += `Summary of webpage: \n\n${result}`;
-      textarea.disabled = false;
-      document.getElementById('actionButton').textContent = 'Summarize';
-      console.log(result);
+    } else {
+      textarea.value = 'No article, para or text to summarize :)'
+      document.getElementById('actionButton').textContent = 'Summarize'
+      document.getElementById('actionButton').disabled = false
     }
   } else {
-    console.log(`Unable to summarize text`);
+    console.log('Unable to summarize text')
   }
 }
 
+async function createSummarizer(canSummarize) {
+  let summarizer
+  if (canSummarize.available === 'readily') {
+    summarizer = await ai.summarizer.create()
+  } else {
+    summarizer = await ai.summarizer.create()
+    summarizer.addEventListener('downloadprogress', (e) =>
+      console.log(e.loaded, e.total)
+    )
+    await summarizer.ready
+  }
+  return summarizer
+}
+
+async function summarizeContent(summarizer, content) {
+  const result = await summarizer.summarize(content.join('\n'))
+  document.getElementById('output').disabled = false
+  document.getElementById('actionButton').textContent = 'Summarize'
+  document.getElementById('actionButton').disabled = false
+  return `Summary of webpage:\n\n${result}`
+}
+
+async function saveDataToChromeStorage(key, value) {
+  try {
+    await setToChromeStorageAsync(key, value)
+    console.log('Data successfully saved!')
+  } catch (error) {
+    console.error('Failed to save data:', error)
+  }
+}
 
 async function setToChromeStorageAsync(key, value) {
   return new Promise((resolve, reject) => {
-    const data = { [key]: value }
-    chrome.storage.local.set(data, () => {
+    chrome.storage.local.set({ [key]: value }, () => {
       if (chrome.runtime.lastError) {
-        console.error('Error setting data:', chrome.runtime.lastError)
         reject(chrome.runtime.lastError)
       } else {
-        console.log(`Data saved: ${key} =`, value)
         resolve()
       }
     })
   })
 }
 
+async function getDataFromChromeStorage(key) {
+  try {
+    const data = await getFromChromeStorageAsync(key)
+    return data || null
+  } catch (error) {
+    console.error('Failed to retrieve data:', error)
+    return null
+  }
+}
+
 async function getFromChromeStorageAsync(key) {
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(key, (result) => {
       if (chrome.runtime.lastError) {
-        console.error('Error getting data:', chrome.runtime.lastError)
         reject(chrome.runtime.lastError)
       } else {
-        console.log(`Data retrieved: ${key} =`, result[key])
-        resolve(result[key] || null) // Resolve with the value or null if not found
+        resolve(result[key])
       }
     })
   })
 }
 
-document.getElementById('actionButton').addEventListener('click', async (e) => {
-  e.target.textContent = 'Summarizing'
-  let sidePanelState = null;
-  let data = null;
+function sendMessageToRuntime(type, content) {
+  chrome.runtime.sendMessage({ type, content })
+}
 
-//   chrome.tabs.query({}, (tabs) => {
-//     tabs.forEach((tab) => {
-//       if (tab.active) {
-//         // Inject content.js into each active tab
-//         chrome.scripting.executeScript(
-//           {
-//             target: { tabId: tab.id },
-//             files: ['clear_extension_data.js'],
-//           },
-//           () => {
-//             console.log(`Content script injected into tab: ${tab.id}`)
-//           }
-//         )
-//       }
-//     })
-//   })
+function injectContentScriptIntoActiveTabs(tabs) {
+  tabs.forEach(async (tab) => {
+    if (tab.active) {
+      chrome.scripting.executeScript(
+        {
+          target: { tabId: tab.id },
+          files: ['content.js'],
+        },
+        () => console.log(`Content script injected into tab: ${tab.id}`)
+      )
+    }
+  })
+}
 
-//   try {
-//     sidePanelState = await await getFromChromeStorageAsync('sidePanelOpened')
-//     if (sidePanelState) {
-//       console.log('Retrieved webPageContent:', sidePanelState)
-//     } else {
-//       console.log('No data found for content.')
-//     }
-//   } catch (error) {
-//     console.error('Failed to retrieve data:', error)
-//   }
-
-//   if (sidePanelState) {
-//    try {
-//       data = await await getFromChromeStorageAsync('webPageContent')
-//       if (data) {
-//         console.log('Retrieved webPageContent:', data)
-//       } else {
-//         console.log('No data found for content.')
-//       }
-//     } catch (error) {
-//       console.error('Failed to retrieve data:', error)
-//     }
-//   } else {
-//     try {
-//         await setToChromeStorageAsync(
-//           'sidePanelOpened',
-//           true
-//         )
-//         console.log('Data successfully saved!')
-//       } catch (error) {
-//         console.error('Failed to save data:', error)
-//       }
-//   }
- 
-  if (data) {
-    chrome.runtime.sendMessage({
-      type: 'siteTextContent',
-      content: data,
-    })
+function checkIfMessageHandlerHasTriggered() {
+  if (messageHandlerTriggered) {
+    console.log('Message handler has already been triggered.')
+    document.getElementById('actionButton').textContent = 'Summarize'
   } else {
-    chrome.tabs.query({}, (tabs) => {
-      timerId = setTimeout(() => {
-        checkIfMessageHandlerHasTriggered()
-      }, 5000)
-      tabs.forEach((tab) => {
-        if (tab.active) {
-          // Inject content.js into each active tab
-          chrome.scripting.executeScript(
-            {
-              target: { tabId: tab.id },
-              files: ['content.js'],
-            },
-            () => {
-              console.log(`Content script injected into tab: ${tab.id}`)
-            }
-          )
-        }
-      })
-    })
+    checkWebPageContent()
   }
-})
+}
 
+async function checkWebPageContent() {
+  const currTabId = await getCurrentTabId();
+  const data = await getDataFromChromeStorage(`webPageContent${currTabId}`)
+  if (data) {
+    await handleRuntimeMessage(
+      { content: data, type: 'siteTextContent' },
+      'timer callback'
+    )
+    console.log('Retrieved webPageContent:', data)
+  } else {
+    console.log('No data found for content.')
+  }
+}
+
+function generateMetaTagPrompt(content) {
+  return `Based on the meta tags values provided, {tag_values: ${cleanStringArrayEnhanced(
+    content
+  )}}, generate a one word category for website these tags are attached to`
+}
+
+// Refactor utility functions like cleanStringArrayEnhanced (unchanged)
 function cleanStringArrayEnhanced(arrayOfStrings, options = {}) {
   const {
     minLength = 3,
@@ -237,316 +208,130 @@ function cleanStringArrayEnhanced(arrayOfStrings, options = {}) {
     allowSpaces = false,
     removeDuplicates = true,
   } = options
+  if (!Array.isArray(arrayOfStrings)) throw new Error('Input must be an array')
 
-  if (!Array.isArray(arrayOfStrings)) {
-    throw new Error('Input must be an array')
-  }
-
-  // Create regex based on options
   const regexPattern = allowSpaces ? /^[a-zA-Z\s]+$/ : /^[a-zA-Z]+$/
-
   let cleaned = arrayOfStrings
-    .map((item) => {
-      // Convert to string and trim
-      const str = String(item).trim()
+    .map((item) => String(item).trim())
+    .filter((str) => str.length > minLength && regexPattern.test(str))
 
-      // Convert case if not case sensitive
-      return caseSensitive ? str : str.toLowerCase()
-    })
-    .filter((str) => {
-      // Basic validation
-      if (!str) return false
-      if (str.length <= minLength) return false
-
-      // Check if string matches pattern
-      return regexPattern.test(str)
-    })
-
-  // Remove duplicates if specified
-  if (removeDuplicates) {
-    cleaned = [...new Set(cleaned)]
-  }
-
-  return cleaned
+  return removeDuplicates ? [...new Set(cleaned)] : cleaned
 }
 
-/**
- * Filter non-English words and sentences from an array of strings
- * @param {string[]} inputArray - Array of strings to filter
- * @param {Object} options - Configuration options
- * @returns {string[]} - Filtered array containing only English text
- */
-async function filterNonEnglishText(inputArray, options = {}) {
-  // Default options
-  const {
-    minLength = 2,
-    maxLength = 1000,
-    removeNumbers = true,
-    removeDuplicates = true,
-    allowProperNouns = true,
-    confidence = 0.8,
-  } = options
-
-  // Input validation
-  if (!Array.isArray(inputArray)) {
-    throw new Error('Input must be an array of strings')
-  }
-
-  // Common English words for basic validation
-  const commonEnglishWords = new Set([
-    'the',
-    'be',
-    'to',
-    'of',
-    'and',
-    'a',
-    'in',
-    'that',
-    'have',
-    'i',
-    'it',
-    'for',
-    'not',
-    'on',
-    'with',
-    'he',
-    'as',
-    'you',
-    'do',
-    'at',
-    'this',
-    'but',
-    'his',
-    'by',
-    'from',
-    'they',
-    'we',
-    'say',
-    'her',
-    'she',
-    'or',
-    'an',
-    'will',
-    'my',
-    'one',
-    'all',
-    'would',
-    'there',
-    'their',
-    'what',
-    'so',
-    'up',
-    'out',
-    'if',
-    'about',
-    'who',
-    'get',
-    'which',
-    'go',
-    'me',
-    'when',
-    'make',
-    'can',
-    'like',
-    'time',
-    'no',
-    'just',
-    'him',
-    'know',
-    'take',
-    'people',
-    'into',
-    'year',
-    'your',
-    'good',
-    'some',
-    'could',
-    'them',
-    'see',
-    'other',
-    'than',
-    'then',
-    'now',
-    'look',
-    'only',
-    'come',
-    'its',
-    'over',
-    'think',
-    'also',
-  ])
-
-  // Regular expressions
-  const numberRegex = /\d+/
-  const alphabetRegex = /^[a-zA-Z\s]+$/
-  const properNounRegex = /^[A-Z][a-z]+/
-
-  /**
-   * Check if a word appears to be English
-   * @param {string} word - Word to check
-   * @returns {boolean} - True if the word appears to be English
-   */
-  function isLikelyEnglish(word) {
-    word = word.toLowerCase().trim()
-
-    // Check common English words
-    if (commonEnglishWords.has(word)) {
-      return true
-    }
-
-    // Check for common English letter patterns
-    const commonPatterns = [
-      'th',
-      'ch',
-      'sh',
-      'ph',
-      'ing',
-      'tion',
-      'ed',
-      'ly',
-      'es',
-      's',
-    ]
-
-    if (commonPatterns.some((pattern) => word.includes(pattern))) {
-      return true
-    }
-
-    // Check vowel to consonant ratio (English words typically have vowels)
-    const vowels = (word.match(/[aeiou]/gi) || []).length
-    const ratio = vowels / word.length
-    return ratio >= 0.2 && ratio <= 0.6
-  }
-
-  /**
-   * Check if a sentence appears to be English
-   * @param {string} sentence - Sentence to check
-   * @returns {boolean} - True if the sentence appears to be English
-   */
-  function isLikelyEnglishSentence(sentence) {
-    const words = sentence.split(/\s+/)
-
-    // Too few or too many words
-    if (words.length < 2 || words.length > 100) {
-      return false
-    }
-
-    // Check if enough words appear to be English
-    const englishWordCount = words.filter(isLikelyEnglish).length
-  }
-
-  // Process the input array
-  let filtered = inputArray
-    .map((item) => {
-      // Convert to string and trim
-      if (typeof item !== 'string') return ''
-      return item.trim()
-    })
-    .filter((str) => {
-      // Basic validation
-      if (!str) return false
-      if (str.length < minLength || str.length > maxLength) return false
-
-      // Remove strings with numbers if specified
-      if (removeNumbers && numberRegex.test(str)) return false
-
-      // Handle single words vs sentences
-      const words = str.split(/\s+/)
-
-      if (words.length === 1) {
-        // Single word processing
-        if (!alphabetRegex.test(str)) return false
-
-        // Allow proper nouns if specified
-        if (allowProperNouns && properNounRegex.test(str)) return true
-
-        return isLikelyEnglish(str)
+async function deleteKeyFromChromeStorageAsync(key) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.remove(key, () => {
+      if (chrome.runtime.lastError) {
+        reject(
+          `Error deleting key "${key}": ${chrome.runtime.lastError.message}`
+        )
       } else {
-        // Sentence processing
-        return isLikelyEnglishSentence(str)
+        console.log(`Key "${key}" successfully deleted from Chrome storage.`)
+        resolve()
       }
     })
-
-  // Remove duplicates if specified
-  if (removeDuplicates) {
-    filtered = [...new Set(filtered)]
-  }
-
-  return filtered
+  })
 }
 
-// Example usage and testing
-// async function testFilterNonEnglishText() {
-//     const testCases = [
-//         // Single words
-//         "hello",
-//         "bonjour",      // French
-//         "Programming",
-//         "こんにちは",    // Japanese
-//         "Computer",
-//         "café",         // French
+async function getCurrentTabId() {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) {
+        reject(
+          `Error fetching current tab: ${chrome.runtime.lastError.message}`
+        )
+        return
+      }
 
-//         // Proper nouns
-//         "John",
-//         "Paris",
-//         "Microsoft",
+      if (tabs && tabs.length > 0) {
+        resolve(tabs[0].id) // Return the ID of the active tab in the current window.
+      } else {
+        reject('No active tab found.')
+      }
+    })
+  })
+}
 
-//         // Sentences
-//         "This is a valid English sentence.",
-//         "Je ne parle pas français.",  // French
-//         "The quick brown fox jumps over the lazy dog.",
-//         "Das ist ein deutscher Satz.", // German
+// async function isTabChanged(currentTabId) {
+//   return new Promise((resolve, reject) => {
+//     chrome.storage.local.get('previousTabId', (result) => {
+//       if (chrome.runtime.lastError) {
+//         reject(
+//           `Error reading from storage: ${chrome.runtime.lastError.message}`
+//         )
+//         return
+//       }
 
-//         // Mixed content
-//         "Hello world 123",
-//         "Testing 测试 test",
-
-//         // Edge cases
-//         "",
-//         "   ",
-//         "123",
-//         "!@#$",
-//         "a",
-//         "I"
-//     ];
-
-//     const options = {
-//         minLength: 2,
-//         maxLength: 1000,
-//         removeNumbers: true,
-//         removeDuplicates: true,
-//         allowProperNouns: true,
-//         confidence: 0.8
-//     };
-
-//     try {
-//         const filtered = await filterNonEnglishText(testCases, options);
-//         console.log('Original texts:', testCases);
-//         console.log('Filtered texts:', filtered);
-
-//         // Additional test cases
-//         console.log('\nTesting with different options:');
-
-//         const strictOptions = {
-//             ...options,
-//             allowProperNouns: false,
-//             confidence: 0.9
-//         };
-//         const strictFiltered = await filterNonEnglishText(testCases, strictOptions);
-//         console.log('Strict filtering:', strictFiltered);
-
-//         const lenientOptions = {
-//             ...options,
-//             removeNumbers: false,
-//             confidence: 0.6
-//         };
-//         const lenientFiltered = await filterNonEnglishText(testCases, lenientOptions);
-//         console.log('Lenient filtering:', lenientFiltered);
-
-//     } catch (error) {
-//         console.error('Error during testing:', error);
-//     }
+//       const previousTabId = result.previousTabId
+//       if (previousTabId === undefined) {
+//         // If no previous tab ID is stored, consider it as changed and store the new ID.
+//         chrome.storage.local.set({ previousTabId: currentTabId }, () => {
+//           if (chrome.runtime.lastError) {
+//             reject(`Error saving tab ID: ${chrome.runtime.lastError.message}`)
+//             return
+//           }
+//           resolve(true) // No previous tab ID; assume changed.
+//         })
+//       } else {
+//         // Compare current tab ID with the stored one.
+//         if (previousTabId === currentTabId) {
+//           resolve(false) // Tab is unchanged.
+//         } else {
+//           // Update the stored tab ID to the current one.
+//           chrome.storage.local.set({ previousTabId: currentTabId }, () => {
+//             if (chrome.runtime.lastError) {
+//               reject(
+//                 `Error updating tab ID: ${chrome.runtime.lastError.message}`
+//               )
+//               return
+//             }
+//             resolve(true) // Tab ID changed.
+//           })
+//         }
+//       }
+//     })
+//   })
 // }
 
-// Run the tests
-// testFilterNonEnglishText();
+async function isTabChanged(currentTabId) {
+  return new Promise((resolve, reject) => {
+    // Retrieve the previous tab ID from Chrome storage
+    chrome.storage.local.get('previousTabId', (result) => {
+      if (chrome.runtime.lastError) {
+        reject(
+          `Error reading from storage: ${chrome.runtime.lastError.message}`
+        )
+        return
+      }
+
+      const previousTabId = result.previousTabId
+
+      if (previousTabId === undefined) {
+        // If no previous tab ID is stored, treat it as changed and save the current tab ID
+        chrome.storage.local.set({ previousTabId: currentTabId }, () => {
+          if (chrome.runtime.lastError) {
+            reject(`Error saving tab ID: ${chrome.runtime.lastError.message}`)
+            return
+          }
+          resolve(true) // Tab is considered changed since there's no previous ID
+        })
+      } else {
+        // Compare the current tab ID with the stored previous tab ID
+        if (previousTabId === currentTabId) {
+          resolve(false) // Tab is unchanged
+        } else {
+          // If the tab has changed, update the storage with the new tab ID
+          chrome.storage.local.set({ previousTabId: currentTabId }, () => {
+            if (chrome.runtime.lastError) {
+              reject(
+                `Error updating tab ID: ${chrome.runtime.lastError.message}`
+              )
+              return
+            }
+            resolve(true) // Tab ID has changed
+          })
+        }
+      }
+    })
+  })
+}
