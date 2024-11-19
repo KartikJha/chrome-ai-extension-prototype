@@ -9,7 +9,7 @@ console.log('Page HTML:', pageHTML)
 // Optionally, send the HTML to the background script
 chrome.runtime.sendMessage({
   type: 'siteTextContent',
-  content: parseHtmlContentEnhanced(pageHTML),
+  content: extractTextFromBody(pageHTML),
   html: pageHTML,
 })
 
@@ -215,4 +215,18 @@ function extractMetaData(htmlString) {
   metaData.keywords = Array.from(metaData.keywords)
 
   return metaData
+}
+
+function extractTextFromBody(htmlContent) {
+    // Parse the HTML content into a DOM structure
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlContent, 'text/html');
+
+    // Get all <p> and <article> elements inside the <body>
+    const elements = doc.body.querySelectorAll('p, article');
+
+    // Extract text content from each element
+    const extractedText = Array.from(elements).map(el => el.textContent.trim());
+
+    return extractedText;
 }

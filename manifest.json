@@ -3,7 +3,7 @@
   "name": "AI Summarizer",
   "description": "Reads data on the current page and summarizes it.",
   "version": "1.0",
-  "permissions": ["tabs", "scripting", "sidePanel", "activeTab"],
+  "permissions": ["tabs", "scripting", "sidePanel", "activeTab", "storage"],
   "action": {
     "default_title": "Click to open sidebar"
   },
