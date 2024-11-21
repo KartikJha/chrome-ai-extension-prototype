@@ -239,11 +239,11 @@ function extractTextFromBody(htmlContent) {
     // Send a message to the background script
     const pageHTML = document.documentElement.outerHTML
     const message = {
-      type: 'siteTextContent',
+      type: 'PAGE_RELOADED',
       content: extractTextFromBody(pageHTML),
       html: pageHTML,
     }
-    chrome.runtime.sendMessage({ type: 'PAGE_RELOADED' }, (response) => {
+    chrome.runtime.sendMessage(message, (response) => {
       if (chrome.runtime.lastError) {
         console.error(
           'Error sending message:',

@@ -16,34 +16,45 @@ async function handleActionButtonClick(e) {
   const currTabId = await getCurrentTabId()
   let data = null
   const changedTab = await isTabChanged(currTabId)
-  if (!changedTab) {
-    data = await getDataFromChromeStorage(`webPageContent:${currTabId}`)
-  }
-  if (data) {
-    handleRuntimeMessage(
-      { type: 'siteTextContent', content: data },
-      'cache-flow'
-    )
-  } else {
-    chrome.tabs.query({}, (tabs) => {
-      timerId = setTimeout(checkIfMessageHandlerHasTriggered, 5000)
-      injectContentScriptIntoActiveTabs(tabs)
-    })
-  }
+  
+  // if (!changedTab) {
+  //   data = await getDataFromChromeStorage(`webPageContent:${currTabId}`)
+  // }
+  // if (data) {
+  //   handleRuntimeMessage(
+  //     { type: 'siteTextContent', content: data },
+  //     'cache-flow'
+  //   )
+  // } else {
+  //   chrome.tabs.query({}, (tabs) => {
+  //     timerId = setTimeout(checkIfMessageHandlerHasTriggered, 5000)
+  //     injectContentScriptIntoActiveTabs(tabs)
+  //   })
+  // }
+
+  chrome.tabs.query({}, (tabs) => {
+    timerId = setTimeout(checkIfMessageHandlerHasTriggered, 5000)
+    injectContentScriptIntoActiveTabs(tabs)
+  })
 }
 
 async function handleRuntimeMessage(message, sender) {
+  
+  messageHandlerTriggered = true
+  clearTimeout(timerId)
+  
   const textarea = document.getElementById('output')
   textarea.disabled = true
-  const currTabId = await getCurrentTabId(); 
+  const currTabId = await getCurrentTabId();
+  
   await saveDataToChromeStorage(`webPageContent:${currTabId}`, message.content)
   if (message.type === 'metaTagContent') {
     await handleMetaTagContent(message, sender, textarea)
   } else if (message.type === 'siteTextContent') {
     await handleSiteTextContent(message, textarea)
   } else if (['PAGE_RELOADED', 'PAGE_NAVIGATED'].includes(message.type)) {
-    const currTabId = await getCurrentTabId()
-    await deleteKeyFromChromeStorageAsync(`webPageContent:${currTabId}`)
+    // const currTabId = await getCurrentTabId()
+    // await deleteKeyFromChromeStorageAsync(`webPageContent:${currTabId}`)
     // await deleteKeyFromChromeStorageAsync('previousTabId')
   }
 }
@@ -58,8 +69,8 @@ async function handleMetaTagContent(message, sender, textarea) {
 }
 
 async function handleSiteTextContent(message, textarea) {
-  messageHandlerTriggered = true
-  clearTimeout(timerId)
+  // messageHandlerTriggered = true
+  // clearTimeout(timerId)
 
   const canSummarize = await ai.summarizer.capabilities()
   if (canSummarize && canSummarize.available !== 'no') {
@@ -182,7 +193,8 @@ function checkIfMessageHandlerHasTriggered() {
 
 async function checkWebPageContent() {
   const currTabId = await getCurrentTabId();
-  const data = await getDataFromChromeStorage(`webPageContent${currTabId}`)
+  const data = await getDataFromChromeStorage(`webPageContent:${currTabId}`)
+  const reload = false;
   if (data) {
     await handleRuntimeMessage(
       { content: data, type: 'siteTextContent' },
@@ -190,8 +202,17 @@ async function checkWebPageContent() {
     )
     console.log('Retrieved webPageContent:', data)
   } else {
-    console.log('No data found for content.')
+    console.log('No data found for content.');
+    reload = true;
   }
+  const textarea = document.getElementById('output')
+  textarea.disabled = true
+  if (reload) {
+    textarea.value = 'Failed to summarize due to cache miss, please reload page and try again'
+  }
+  document.getElementById('actionButton').textContent = 'Summarize'
+  document.getElementById('actionButton').disabled = false
+
 }
 
 function generateMetaTagPrompt(content) {
