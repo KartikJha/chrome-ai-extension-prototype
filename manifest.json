@@ -1,16 +1,17 @@
 {
-    "manifest_version": 3,
-    "name": "Speech Logger",
-    "version": "1.0",
-    "description": "Takes speech input and logs it in popup console",
-    "action": {
-      "default_popup": "popup.html",
-      "default_title": "Speech Logger"
-    },
-    "permissions": [
-        "scripting",
-        "activeTab",
-        "audioCapture"
-    ]
-  }
-  
+  "manifest_version": 3,
+  "name": "AI Summarizer",
+  "description": "Reads data on the current page and summarizes it.",
+  "version": "1.0",
+  "permissions": ["tabs", "scripting", "sidePanel", "activeTab", "storage", "webNavigation"],
+  "action": {
+    "default_title": "Click to open sidebar"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": ["http://*/*", "https://*/*"]
+}
