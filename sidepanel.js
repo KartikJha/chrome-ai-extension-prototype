@@ -194,7 +194,7 @@ function checkIfMessageHandlerHasTriggered() {
 async function checkWebPageContent() {
   const currTabId = await getCurrentTabId();
   const data = await getDataFromChromeStorage(`webPageContent:${currTabId}`)
-  const reload = false;
+  let reload = false;
   if (data) {
     await handleRuntimeMessage(
       { content: data, type: 'siteTextContent' },
