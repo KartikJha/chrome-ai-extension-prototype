@@ -17,8 +17,6 @@ chrome.action.onClicked.addListener(() => {
   });
 });
 
-
-
 // chrome.webNavigation.onCommitted.addListener((details) => {
 //     // Filter only for main frame navigations
 //     if (details.frameId === 0) {
